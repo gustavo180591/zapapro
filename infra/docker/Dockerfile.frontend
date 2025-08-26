@@ -1,0 +1,72 @@
+# =======================================
+# Build stage
+# =======================================
+FROM node:20-alpine AS builder
+
+WORKDIR /app
+
+# Install pnpm
+RUN corepack enable && corepack prepare pnpm@latest --activate
+
+# Install dependencies
+COPY frontend/package.json frontend/pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
+
+# Copy application code
+COPY frontend/ .
+
+# Build the application
+RUN pnpm build
+
+# =======================================
+# Development stage
+# =======================================
+FROM node:20-alpine AS development
+
+WORKDIR /app
+
+# Install pnpm
+RUN corepack enable && corepack prepare pnpm@latest --activate
+
+# Install dependencies
+COPY frontend/package.json frontend/pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
+
+# Copy application code
+COPY frontend/ .
+
+# Expose the application port
+EXPOSE 5173
+
+# Start the development server
+CMD ["pnpm", "dev", "--host"]
+
+# =======================================
+# Production stage
+# =======================================
+FROM node:20-alpine AS production
+
+WORKDIR /app
+
+# Install pnpm
+RUN corepack enable && corepack prepare pnpm@latest --activate
+
+# Install dependencies
+COPY frontend/package.json frontend/pnpm-lock.yaml ./
+RUN pnpm install --prod --frozen-lockfile
+
+# Copy built application
+COPY --from=builder /app/build ./build
+COPY --from=builder /app/package.json .
+
+# Set environment to production
+ENV NODE_ENV=production
+
+# Install serve to run the application
+RUN npm install -g serve
+
+# Expose the application port
+EXPOSE 3000
+
+# Start the application
+CMD ["serve", "-s", "build", "-l", "3000"]

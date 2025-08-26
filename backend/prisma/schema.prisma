@@ -1,0 +1,195 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String    @id @default(uuid())
+  email     String    @unique
+  password  String
+  firstName String?
+  lastName  String?
+  role      Role      @default(CUSTOMER)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  orders    Order[]
+  addresses Address[]
+  cart      Cart?
+}
+
+enum Role {
+  CUSTOMER
+  ADMIN
+  STAFF
+}
+
+model Address {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  street      String
+  city        String
+  state       String
+  postalCode  String
+  country     String   @default("Argentina")
+  isDefault   Boolean  @default(false)
+  phoneNumber String
+  fullName    String
+  notes       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Product {
+  id          String     @id @default(uuid())
+  name        String
+  description String?
+  price       Float
+  sku         String    @unique
+  brand       String
+  category    String
+  images      String[]
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  variants    Variant[]
+  reviews     Review[]
+}
+
+model Variant {
+  id        String   @id @default(uuid())
+  productId String
+  product   Product  @relation(fields: [productId], references: [id])
+  size      String
+  width     String   @default("standard") // standard, wide, etc.
+  stock     Int      @default(0)
+  sku       String   @unique
+  barcode   String?
+  price     Float?   // Override product price if exists
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  cartItems CartItem[]
+  orderItems OrderItem[]
+}
+
+model Cart {
+  id        String     @id @default(uuid())
+  userId    String     @unique
+  user      User       @relation(fields: [userId], references: [id])
+  items     CartItem[]
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+}
+
+model CartItem {
+  id        String   @id @default(uuid())
+  cartId    String
+  cart      Cart     @relation(fields: [cartId], references: [id])
+  variantId String
+  variant   Variant  @relation(fields: [variantId], references: [id])
+  quantity  Int
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([cartId, variantId])
+}
+
+model Order {
+  id              String      @id @default(uuid())
+  userId          String
+  user            User        @relation(fields: [userId], references: [id])
+  status          OrderStatus @default(PENDING)
+  items           OrderItem[]
+  shippingAddress String      // JSON string of address
+  billingAddress  String?     // JSON string of address
+  subtotal        Float
+  shippingCost    Float
+  tax             Float
+  total           Float
+  mpPaymentId     String?     // MercadoPago payment ID
+  mpPreferenceId  String?     // MercadoPago preference ID
+  mpStatus        String?     // MercadoPago status
+  shippingMethod  String
+  trackingNumber  String?
+  trackingUrl     String?
+  notes           String?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+}
+
+model OrderItem {
+  id        String   @id @default(uuid())
+  orderId   String
+  order     Order    @relation(fields: [orderId], references: [id])
+  variantId String
+  variant   Variant  @relation(fields: [variantId], references: [id])
+  quantity  Int
+  price     Float
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+enum OrderStatus {
+  PENDING
+  PAYMENT_PENDING
+  PAYMENT_AUTHORIZED
+  PAYMENT_FAILED
+  PROCESSING
+  SHIPPED
+  DELIVERED
+  CANCELLED
+  RETURNED
+  REFUNDED
+}
+
+model Review {
+  id        String   @id @default(uuid())
+  productId String
+  product   Product  @relation(fields: [productId], references: [id])
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  rating    Int      @range(1, 5)
+  comment   String?
+  isVisible Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Coupon {
+  id           String     @id @default(uuid())
+  code         String     @unique
+  description  String?
+  discountType DiscountType @default(PERCENTAGE)
+  discountValue Float
+  minPurchase  Float?     @default(0)
+  maxUses      Int?
+  usedCount    Int        @default(0)
+  startsAt     DateTime?
+  expiresAt    DateTime?
+  isActive     Boolean    @default(true)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+}
+
+enum DiscountType {
+  PERCENTAGE
+  FIXED_AMOUNT
+}
+
+// Add indexes for better query performance
+@@index([email])
+@@index([role])
+@@index([category])
+@@index([brand])
+@@index([isActive])
+@@index([status])
+@@index([mpPaymentId])
+@@index([mpPreferenceId])
+@@index([code])

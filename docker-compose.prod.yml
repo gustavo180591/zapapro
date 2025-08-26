@@ -1,0 +1,169 @@
+version: "3.9"
+
+services:
+  # PostgreSQL Database
+  db:
+    image: postgres:16
+    container_name: zapapro-db-prod
+    environment:
+      POSTGRES_USER: ${DB_USER:-zapapro}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-change-this-password}
+      POSTGRES_DB: ${DB_NAME:-zapapro}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-zapapro}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: zapapro-redis-prod
+    command: redis-server --save 60 1 --loglevel warning --requirepass ${REDIS_PASSWORD:-change-this-password}
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-change-this-password}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - redisdata:/data
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Backend Service
+  backend:
+    image: ${ECR_REPOSITORY:-zapapro}/zapapro-backend:${TAG:-latest}
+    container_name: zapapro-backend-prod
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://${DB_USER:-zapapro}:${DB_PASSWORD:-change-this-password}@db:5432/${DB_NAME:-zapapro}?schema=public
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-change-this-password}@redis:6379
+      - JWT_SECRET=${JWT_SECRET}
+      - JWT_EXPIRES_IN=1h
+      - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET}
+      - JWT_REFRESH_EXPIRES_IN=7d
+      - MP_ACCESS_TOKEN=${MP_ACCESS_TOKEN}
+      - MP_WEBHOOK_SECRET=${MP_WEBHOOK_SECRET}
+      - AWS_REGION=${AWS_REGION}
+      - SQS_QUEUE_URL=${SQS_QUEUE_URL}
+      - SES_SENDER=${SES_SENDER}
+      - GOOGLE_MAPS_API_KEY=${GOOGLE_MAPS_API_KEY}
+      - WHATSAPP_TOKEN=${WHATSAPP_TOKEN}
+      - POSTHOG_KEY=${POSTHOG_KEY}
+      - CORS_ORIGINS=${CORS_ORIGINS}
+    ports:
+      - "3001:3001"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1G
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "http://localhost:3001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Frontend Service
+  frontend:
+    image: ${ECR_REPOSITORY:-zapapro}/zapapro-frontend:${TAG:-latest}
+    container_name: zapapro-frontend-prod
+    environment:
+      - NODE_ENV=production
+      - VITE_API_BASE_URL=${VITE_API_BASE_URL:-http://localhost:3001}
+      - VITE_POSTHOG_KEY=${POSTHOG_KEY}
+      - VITE_GOOGLE_MAPS_API_KEY=${GOOGLE_MAPS_API_KEY}
+    ports:
+      - "80:80"
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "http://localhost:80/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Traefik for reverse proxy and SSL
+  reverse-proxy:
+    image: traefik:v2.10
+    container_name: zapapro-reverse-proxy
+    command:
+      - "--api.insecure=true"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.web.http.redirections.entryPoint.to=websecure"
+      - "--entrypoints.web.http.redirections.entryPoint.scheme=https"
+      - "--entrypoints.websecure.address=:443"
+      - "--certificatesresolvers.leresolver.acme.httpchallenge=true"
+      - "--certificatesresolvers.leresolver.acme.httpchallenge.entrypoint=web"
+      - "--certificatesresolvers.leresolver.acme.email=${LETSENCRYPT_EMAIL}"
+      - "--certificatesresolvers.leresolver.acme.storage=/letsencrypt/acme.json"
+    ports:
+      - "80:80"
+      - "443:443"
+      - "8080:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - letsencrypt:/letsencrypt
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 256M
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.api.rule=Host(`traefik.${DOMAIN}`)"
+      - "traefik.http.routers.api.service=api@internal"
+      - "traefik.http.routers.api.entrypoints=websecure"
+      - "traefik.http.routers.api.tls.certresolver=leresolver"
+
+volumes:
+  pgdata:
+  redisdata:
+  letsencrypt:
